@@ -2,7 +2,7 @@
 
 A comprehensive data analysis and machine learning project predicting home prices in King County, Washington using statistical modeling and regression techniques.
 
-## 🏠 Project Overview
+## Overview
 
 This project analyzes housing sales data from King County, Washington to build predictive models for residential property values. The analysis combines data cleaning, exploratory data analysis, linear regression, and logistic regression to understand the factors that drive housing prices and identify high-quality properties.
 
@@ -14,7 +14,7 @@ This project analyzes housing sales data from King County, Washington to build p
 - **Classification Analysis**: Logistic regression for identifying high-quality homes
 - **Visualization**: Extensive exploratory data analysis with professional charts and graphs
 
-## 📊 Dataset
+## Dataset
 
 The dataset contains over 21,000 home sales records from King County, including:
 
@@ -24,7 +24,7 @@ The dataset contains over 21,000 home sales records from King County, including:
 - **Historical Information**: Year built, renovation history
 - **Sale Information**: Price, date of sale
 
-## 🔧 Methodology
+## Methodology
 
 ### Data Preprocessing
 1. **Quality Validation**: Identification and correction of data entry errors
@@ -47,7 +47,7 @@ The dataset contains over 21,000 home sales records from King County, including:
 - **Feature Selection**: Price, square footage, year built, and geographic region
 - **Model Evaluation**: ROC analysis, AUC = 0.77
 
-## 📈 Key Findings
+## Key Findings
 
 ### Price Prediction Model
 The final linear regression model identified these key price drivers:
@@ -73,7 +73,7 @@ High-quality homes are characterized by:
 - **ROCR** - ROC analysis for classification
 - **R Markdown** - Reproducible research documentation
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 ├── king_county_housing_analysis.Rmd    # Main analysis notebook
@@ -97,7 +97,7 @@ install.packages(c("tidyverse", "ggplot2", "leaps", "faraway", "ROCR", "scales",
 3. Ensure `kc_house_data.csv` is in the working directory
 4. Run all code chunks to reproduce the analysis
 
-## 📋 Analysis Highlights
+## Analysis Highlights
 
 ### Data Quality Improvements
 - Corrected 13 properties with verified data entry errors
@@ -115,7 +115,7 @@ install.packages(c("tidyverse", "ggplot2", "leaps", "faraway", "ROCR", "scales",
 - Geographic location significantly impacts valuations
 - Recent renovations don't always correlate with higher quality ratings
 
-## 🔮 Future Enhancements
+## Future Enhancements
 
 - **Time Series Analysis**: Incorporate seasonal trends and market cycles
 - **Advanced ML Models**: Random Forest, XGBoost for improved predictions
@@ -123,7 +123,7 @@ install.packages(c("tidyverse", "ggplot2", "leaps", "faraway", "ROCR", "scales",
 - **Economic Indicators**: Integration with local economic data
 - **Interactive Dashboard**: Shiny app for real-time predictions
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
