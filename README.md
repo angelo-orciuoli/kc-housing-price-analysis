@@ -130,4 +130,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-*This analysis demonstrates practical applications of statistical modeling in real estate valuation and showcases best practices in data science workflows.*
