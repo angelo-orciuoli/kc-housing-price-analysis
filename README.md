@@ -111,19 +111,9 @@ install.packages(c("tidyverse", "ggplot2", "leaps", "faraway", "ROCR", "scales",
 - **Logistic Regression**: 77% accuracy in identifying quality homes
 - **Cross-validation**: Models tested on held-out test data
 
-### Business Insights
-- Waterfront properties command the highest premiums
-- Property grade is a stronger predictor than condition
-- Geographic location significantly impacts valuations
-- Recent renovations don't always correlate with higher quality ratings
+## Learning Objectives
 
-## Future Enhancements
-
-- **Time Series Analysis**: Incorporate seasonal trends and market cycles
-- **Advanced ML Models**: Random Forest, XGBoost for improved predictions
-- **Geographic Analysis**: Detailed neighborhood-level clustering
-- **Economic Indicators**: Integration with local economic data
-- **Interactive Dashboard**: Shiny app for real-time predictions
+This project was undertaken as a statistical learning exercise to develop and apply various analytical techniques including data cleaning, exploratory data analysis, linear regression modeling, and logistic regression classification. The analysis served as practical experience in working with real-world datasets, handling data quality issues, and building predictive models using R.
 
 ## License
 
