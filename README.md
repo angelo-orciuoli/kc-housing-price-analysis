@@ -2,6 +2,9 @@
 
 A comprehensive data analysis and machine learning project predicting home prices in King County, Washington using statistical modeling and regression techniques.
 
+## Rendered Output
+View the rendered HTML file: [View Page](https://github.com/angelo-orciuoli/kc-housing-price-analysis/deployments/github-pages)
+
 ## Overview
 
 This project analyzes housing sales data from King County, Washington to build predictive models for residential property values. The analysis combines data cleaning, exploratory data analysis, linear regression, and logistic regression to understand the factors that drive housing prices and identify high-quality properties.
