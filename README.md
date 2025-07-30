@@ -79,7 +79,9 @@ High-quality homes are characterized by:
 ## Project Structure
 
 ```
-├── king_county_housing_analysis.Rmd    # Analysis notebook
+
+├── king_county_housing_analysis.R      # R script
+├── king_county_housing_analysis.Rmd    # R notebook
 ├── kc_house_data.csv                   # Housing dataset
 ├── LICENSE                             # MIT License
 └── README.md                           # This file
