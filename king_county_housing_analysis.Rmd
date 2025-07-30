@@ -1,6 +1,6 @@
 ---
 title: "King County Housing Price Analysis"
-author: "Data Analysis Project"
+author: "Angelo Orciuoli"
 output: 
   html_document:
     toc: true
