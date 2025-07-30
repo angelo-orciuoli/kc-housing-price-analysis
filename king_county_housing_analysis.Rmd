@@ -1,0 +1,933 @@
+---
+title: "King County Housing Price Analysis"
+author: "Data Analysis Project"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r libraries, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(scales)
+library(gridExtra)
+library(ggplot2)
+library(leaps)
+library(faraway)
+library(ROCR)
+```
+
+# Executive Summary
+
+This project analyzes housing price data from King County, Washington, to build predictive models for home values. The analysis includes comprehensive data cleaning, exploratory data analysis, linear regression modeling, and logistic regression for home quality classification.
+
+# Data Cleaning and Preprocessing
+
+This section includes steps to identify and fix data entry errors and transform problematic variables in the King County housing dataset.
+
+## Load and Inspect the Data
+
+```{r data_loading}
+# Load the King County housing dataset
+data <- read.csv("kc_house_data.csv", sep=",", header = TRUE)
+
+# Display first 5 rows
+head(data)
+
+# Check data structure
+str(data)
+
+# Check for missing values
+cat("Missing values per column:\n")
+colSums(is.na(data))
+```
+
+## Identify Potential Data Entry Errors
+
+In this section, we identify observations that have clearly incorrect or suspicious values. These include homes with 0 or large numbers of bedrooms and bathrooms, 0 square footage, and any unusual pricing or year values.
+
+### Bedroom and Bathroom Anomalies
+
+```{r data_quality_check}
+# Check for problematic bedroom and bathroom values
+problem_rows <- data[
+  (data$bedrooms == 0 | data$bedrooms == 33 | data$bathrooms == 0) &
+  !is.na(data$bedrooms) & !is.na(data$bathrooms),
+  c("id", "bedrooms", "bathrooms", "sqft_living", "price", "zipcode")
+]
+
+cat("Properties with suspicious bedroom/bathroom values:\n")
+print(problem_rows)
+cat("\nFound", nrow(problem_rows), "properties with extreme bedroom/bathroom values")
+``` 
+
+### Manual Data Corrections
+
+Based on external verification using King County Parcel Viewer, we apply targeted corrections to properties with verified data entry errors:
+
+```{r data_corrections}
+# Apply manual corrections based on external verification
+corrections <- list(
+  list(id = 6306400140, bedrooms = 5, bathrooms = 4.50),
+  list(id = 3421079032, bedrooms = 3, bathrooms = 3.75),
+  list(id = 3918400017, bedrooms = 3, bathrooms = 2.25),
+  list(id = 6896300380, bedrooms = 3, bathrooms = NA), # bedroom only
+  list(id = 2954400190, bedrooms = 4, bathrooms = 4),
+  list(id = 2569500210, bedrooms = 4, bathrooms = NA),
+  list(id = 2310060040, bedrooms = 4, bathrooms = NA),
+  list(id = 7849202190, bedrooms = 3, bathrooms = 1.50),
+  list(id = 7849202299, bedrooms = 0, bathrooms = NA), # verified studio
+  list(id = 9543000205, bedrooms = 2, bathrooms = 1),
+  list(id = 2402100895, bedrooms = 3, bathrooms = NA), # was 33 bedrooms
+  list(id = 1222029077, bedrooms = 1, bathrooms = 1.50),
+  list(id = 3374500520, bedrooms = 4, bathrooms = 3.5)
+)
+
+# Apply corrections
+for (correction in corrections) {
+  if (!is.na(correction$bedrooms)) {
+    data[data$id == correction$id, "bedrooms"] <- correction$bedrooms
+  }
+  if (!is.na(correction$bathrooms)) {
+    data[data$id == correction$id, "bathrooms"] <- correction$bathrooms
+  }
+}
+
+# Remove unverifiable records
+remove_ids <- c(5702500050, 203100435, 3980300371)
+data <- data[!data$id %in% remove_ids, ]
+
+cat("Applied corrections to", length(corrections), "properties")
+cat("\nRemoved", length(remove_ids), "unverifiable records")
+cat("\nRemaining records:", nrow(data))
+```
+
+
+As part of the data cleaning process, we found 17 properties with unusual or clearly incorrect values for bedrooms and bathrooms. Some had 0 bedrooms or 0 bathrooms, and one even had 33 bedrooms, which is obviously unrealistic. Instead of deleting these rows right away, we looked each one up manually using the King County Parcel Viewer to verify what the correct values should be. For most of them, we was able to confirm the actual number of rooms and made the necessary corrections based on that. For instance, one home listed with 0 bedrooms and 0 bathrooms was corrected to 4 bedrooms and 4 bathrooms after verification, and the home listed with 33 bedrooms was updated to 3, which made more sense given its size. One property turned out to be a studio-style layout with 0 bedrooms and 1.5 bathrooms, so we kept that one as-is. In three cases, we couldn’t find any record of the property, and since the information couldn’t be confirmed and looked suspicious, we decided to remove those rows. Overall, this process helped us clean the dataset in a careful and meaningful way, using outside sources to make informed decisions instead of relying only on assumptions or automatic removals.
+
+
+### Check for Duplicate Property IDs
+
+```{r}
+# 177 homes with duplicate IDs
+dup_count <- sum(duplicated(data$id))
+cat(dup_count, "homes with duplicate IDs\n")
+```
+
+
+### Living Area and Lot Size Check for Zero
+
+We check for homes with sqft_living == 0 or sqft_lot == 0. A house cannot have 0 square feet of living space or land area.
+
+
+```{r}
+data[data$sqft_living == 0 | data$sqft_lot == 0, ]
+```
+No homes in the dataset have 0 for sqft_living or sqft_lot
+
+
+
+### Price Check for Zero or negative
+
+The price variable should always be a positive number. A home with a price of 0 or less is invalid for this dataset, and such rows should be removed.
+
+```{r}
+summary(data$price)
+data[data$price <= 0, ]
+```
+There are no homes with a price ≤ 0. There were no such entries, so no cleaning was necessary for this variable.
+
+
+### Year Built & Year Renovated Check for future years
+We check for homes with yr_built or yr_renovated in the future (after 2015)
+
+```{r}
+data[data$yr_built > 2015 | data$yr_renovated > 2015, ]
+```
+Dataset has no homes built or renovated after 2015.
+
+
+## Feature Engineering
+
+### Date Feature Extraction
+
+The date column is a character string and not useful for modeling. We'll extract: year and month sold.
+
+```{r}
+data$year_sold <- as.numeric(substr(data$date, 1, 4))
+data$month_sold <- as.numeric(substr(data$date, 5, 6))
+
+table(data$year_sold)
+table(data$month_sold)
+```
+
+### Geographic Region Classification
+
+zipcode has over 70 unique values. That’s too many for regression modeling, and need 70 dummy variables, which will clutters model and Increases risk of overfitting
+
+```{r}
+city_zips <- c(98101, 98102, 98104, 98105, 98109, 98112, 98115, 98116, 98118, 98119, 98121, 98122, 98125, 98126, 98133, 98134,98136, 98144, 98154, 98164, 98174, 98195)
+
+suburb_zips <- c(98004, 98005, 98006, 98007, 98008, 98027, 98029, 98033,98034, 98040, 98052, 98053, 98056, 98057, 98059, 98072,98074, 98075, 98092, 98070, 98028, 98019)
+
+rural_zips <- setdiff(unique(data$zipcode), union(city_zips, suburb_zips))
+
+data$region <- case_when(
+  data$zipcode %in% city_zips ~ "City",
+  data$zipcode %in% suburb_zips ~ "Suburb",
+  data$zipcode %in% rural_zips ~ "Rural"
+)
+
+data$region <- factor(data$region, levels = c("City", "Suburb", "Rural"))
+
+table(data$region)
+```
+
+4471 are city home, 7266 are suburb, and 9873 are rural.
+
+### Grouping Homes by Renovation Recency
+
+```{r}
+data$renovation_group <- case_when(
+  data$yr_renovated == 0 ~ "Never Renovated",
+  data$yr_renovated >= 2005 ~ "Recently Renovated",
+  TRUE ~ "Renovated Long Ago"
+)
+data$renovation_group <- factor(data$renovation_group)
+table(data$renovation_group)
+```
+
+20,699 homes were not renovated, 320 homes were recently renovated; and 594 are renovated long ago
+
+### Transform Latitude & Longitude into Distance to Downtown and compare distance with condition
+
+```{r}
+data$waterfront <-factor(data$waterfront)
+```
+
+### Transform Latitude & Longitude into Distance to Downtown and compare distance with condition
+
+```{r}
+data$distance_to_downtown <- sqrt(
+  (data$lat - 47.6062)^2 + (data$long + 122.3321)^2
+)
+
+summary(data$distance_to_downtown)
+```
+
+### Check for multicollinearity
+
+```{r}
+# Check for multicollinearity among square footage variables
+sqft_vars <- data[, c("sqft_living", "sqft_above", "sqft_basement", "sqft_living15")]
+cor_matrix <- round(cor(sqft_vars), 2)
+cor_matrix
+
+data$sqft_above <- NULL
+data$sqft_basement <- NULL
+```
+
+# Exploratory Data Analysis
+
+This section contains visualizations that explore how price is related to the other factors.
+
+```{r}
+# Split data into training and testing. We will only use the training data for the visualizations
+set.seed(1)
+sample<-sample.int(nrow(data), floor(.80*nrow(data)), replace = F)
+train<-data[sample, ]
+test<-data[-sample, ]
+```
+
+### Density plot for price
+
+```{r}
+# distribution of price
+ggplot(train, aes(x=price))+
+  scale_x_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Price", y="Density", title = "Distrubution of Price")+
+  geom_density()
+```
+### Boxplot of price
+
+```{r}
+ggplot(train, aes(x= "", y=price))+
+  geom_boxplot()+
+  scale_y_continuous(breaks = breaks_extended(10),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Price", y="Price", title = "Summary of Price")
+```
+```{r}
+# Boxplot statistics
+summary(train$price)
+```
+
+### Bar chart of Average Price & Boxplot of Price by Number of Bedrooms
+
+```{r}
+#bar chart and box plot that show how # of bedrooms are related to price
+ggplot(train, aes(x=bedrooms, y=price))+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Bedrooms", y="Averge Price", title = "Average Price by Number of Bedrooms")+
+  stat_summary(geom="bar", fill="red")
+
+ggplot(train, aes(x=as.factor(bedrooms), y=price))+
+  geom_boxplot(fill="lightblue")+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Bedrooms", y="Price", title = "Price Distribtion by Number of Bedrooms")
+  
+
+```
+
+### Bar chart of Average Price by Number of Bathrooms
+
+```{r}
+#bar chart and box plot that show how # of bedrooms are related to price
+ggplot(train, aes(x=cut(bathrooms, breaks=c(0,1,2,3,4,5,6,7,8)), y=price))+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Bathrooms", y="Averge Price", title = "Average Price by Number of Bathrooms")+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  scale_x_discrete(labels = c("0-1", "1-2", "2-3","3-4","4-5", "5-6", "6-7", "7+"))+
+  stat_summary(geom="bar", fill="red")
+
+```
+
+### Scatter plot of price against square footage
+
+```{r}
+ggplot(train, aes(x=sqft_living, y=price))+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Living Square Footage", y="Price", title = "Price Against Living Square Footage")+
+  geom_point()
+```
+
+### Boxplots of price by waterfront
+
+```{r}
+ggplot(train, aes(x=waterfront, y=price))+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Waterfront", y="Price", title = "Price by Waterfront")+
+  geom_boxplot(fill="lightblue")
+```
+
+### Barcharts of Price by Grade and Condition
+
+```{r}
+grade <- ggplot(train, aes(x=grade, y=price))+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Grade", y="Price", title = "Price by Grade")+
+  stat_summary(geom="bar", fill="green")
+
+condition <- ggplot(train, aes(x=condition, y=price))+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Condition", y="Price", title = "Price by Condition")+
+  stat_summary(geom="bar", fill="green")
+
+grid.arrange(grade,condition,ncol=2,nrow=2)
+```
+
+### Box pots of Log (Price) by Region
+
+```{r}
+# 'Region' was derived from 'zipcode'
+ggplot(train, aes(x=region, y=log(price)))+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Region", y="log(Price)", title = "log(Price) by Region")+
+  geom_boxplot(fill="lavender")
+```
+
+### Density plots of Distance to Downtown & Year Built by Region
+
+```{r}
+dist <-ggplot(train, aes(x=distance_to_downtown, color=region))+
+        theme(plot.title = element_text(hjust=.5))+
+        labs(x="Distance to Downtown (decimal-degrees)", 
+            title = "Density Plot of Distance to Downtown")+
+        geom_density()
+
+built <- ggplot(train,aes(x=yr_built, color=region))+
+          theme(plot.title = element_text(hjust=.5))+
+          labs(x="Year Built",
+               title = "Density Plot of Distance to Downtown")+
+          geom_density()
+
+grid.arrange(dist,built,ncol=2,nrow=2)
+```
+
+### Scatterplot of Log (Price) Against Distance to Downtown by Region
+
+```{r}
+ggplot(train, aes(x=distance_to_downtown, y=log(price), color=region))+
+  theme(plot.title=element_text(hjust=.5))+
+  scale_y_continuous(breaks = breaks_extended(6),labels =    label_dollar())+
+  labs(x="Distance to Downtown (decimal-degrees)",
+       y= "Log(price)",
+       color = "Region",
+       title = "Log(price) Against Distance to Downtown by Region")+
+  geom_point()
+
+```
+
+### Scatterplot of Log (Price) Against Distance to Downtown by Grade
+
+```{r}
+ggplot(train, aes(x=distance_to_downtown, y=log(price), color=grade))+
+  scale_y_continuous(breaks = breaks_extended(6),labels = label_dollar())+
+  scale_color_gradient(low = "blue", high = "red")+
+  theme(plot.title=element_text(hjust=.5))+
+  labs(x="Distance to Downtown (decimal-degrees)",
+       y= "Log(price)",
+       color = "Grade",
+       title = "Log(price) Against Distance to Downtown by Grade")+
+  geom_point()
+```
+
+### Scatterplot of Log (Price) Against Condition by Year Built
+
+```{r}
+ggplot(train,aes(x=condition,y=log(price), color=yr_built))+
+  scale_y_continuous(breaks = breaks_extended(6),labels =    label_dollar())+
+  scale_color_gradientn(colors=c("steelblue", "skyblue", "lightgreen", "gold", "tomato"))+
+  theme(plot.title = element_text(hjust=.5))+
+  labs(x="Condition",
+       y= "log(Price)",
+       color = "Year Built",
+       title = "log(Price) Against Condition by Year Built")+
+  geom_point()
+```
+
+### Scatterplot of Log (Price) by Distance to Downtown by Renovated
+
+```{r}
+ggplot(train,aes(x=distance_to_downtown,y=log(price), color=renovation_group))+
+  scale_y_continuous(breaks = breaks_extended(6),labels =    label_dollar())+
+  theme(plot.title = element_text(hjust=.05))+
+  labs(x="Distance to Downtown (decimal-degrees)",
+       y= "log(Price)",
+       color = "Renovated",
+       title = "log(Price) Against Distance to Downtown by Renovated")+
+  geom_point(alpha=.5)
+```
+
+# Linear Regression Analysis
+
+This section presents a linear regression model for predicting Price and outlines the methodology used to develop it.
+
+### Define linear regression model with price as response variable and all other variables as predictor variables
+
+```{r}
+# 21 predictor variables
+full_model <- lm(price ~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + waterfront + view + condition + grade + yr_built + yr_renovated + zipcode + lat + long + sqft_living15 + sqft_lot15 + year_sold + month_sold + region + renovation_group + distance_to_downtown, data = train)
+
+summary(full_model)
+```
+
+Note: 'id' and 'date' were excluded from the full model since 'id' is a unique identifier with no predictive value, and 'date' contains too many unique values to be effectively represented as dummy variables.
+
+Based on the full model summary, the variables 'floors', 'sqft_lot15', and 'month_sold' are not statistically significant predictors of price and can be removed. Additionally, 'distance_to_downtown' renders the geographic coordinates redundant, while 'region' captures the variation in 'zipcode', allowing both to be excluded.
+
+### Influential observations, high leverages observations, and outliers for the Full Model
+
+```{r}
+# Compute diagnostics in one cell
+ext.student.res <- rstudent(full_model)
+student_res_count <- sum(abs(ext.student.res) > 2)
+
+std.res <- rstandard(full_model)
+std_res_count <- sum(abs(std.res) > 2)
+
+lev <- lm.influence(full_model)$hat
+n <- nrow(data)
+p <- 21
+high_lev_count <- sum(lev > 2 * p / n)
+
+DFFITS_vals <- dffits(full_model)
+dffits_count <- sum(abs(DFFITS_vals) > 2 * sqrt(p / n))
+
+COOKS_vals <- cooks.distance(full_model)
+cooks_count <- sum(COOKS_vals > 1)
+
+# Summary output
+cat("The number of outliers according to studentized and standardized residuals is", 
+    student_res_count, "and", std_res_count, 
+    "respectively. There are", high_lev_count, "high leverage points,", 
+    dffits_count, "influential points according to DFFITS, and", 
+    cooks_count, "influential points according to Cook's distance.\n")
+```
+
+
+### Define linear regression model with slightly less predictor variables
+
+```{r}
+# 15 predictor variables
+model1 <- lm(price ~ bedrooms + bathrooms + sqft_living + sqft_lot + waterfront + view + condition + grade + yr_built + yr_renovated + sqft_living15 + year_sold + region + renovation_group + distance_to_downtown, data = train)
+
+summary(model1)
+```
+
+15 predictor variables is still generally too many for a linear regression model because it increases the risk of overfitting, makes the model harder to interpret, and can introduce multicollinearity, which affects the reliability of coefficient estimates.
+
+### Use regsubsets function to identify best combination of predictor variables
+
+```{r}
+allreg <- regsubsets(price ~ bedrooms + bathrooms + sqft_living + sqft_lot + waterfront + view + condition + grade + yr_built + yr_renovated + sqft_living15 + year_sold + region + renovation_group + distance_to_downtown, data = train, nbest=1)
+```
+
+### Adjusted R²
+Rewards goodness of fit while penalizing extra predictors
+```{r}
+coef(allreg, which.max(summary(allreg)$adjr2))
+```
+### Mallows' Cp 
+Identifies models with low bias and variance
+```{r}
+coef(allreg, which.min(summary(allreg)$cp))
+```
+
+### BIC 
+Favors simpler models by heavily penalizing overfitting
+```{r}
+coef(allreg, which.min(summary(allreg)$bic))
+```
+The predictors that lead to a first-order model that have the best Adjusted R², Mallows' Cp, and BIC are identical, therefore, our final model can be defined.
+
+### Define Model with final predictors
+
+```{r}
+# 8 predictor variables
+model2 <- lm(price ~ bedrooms + sqft_living + waterfront + view + grade + yr_built + region + distance_to_downtown, data = train)
+
+summary(model2)
+```
+
+### Check model meets linear regression assumptions
+
+```{r}
+plot(model2, which = 1) # Linearity
+plot(residuals(model2), type = "l", main = "Residuals Plot") # Independence of Errors
+plot(model2, which = 3) # Homoscedasticity
+plot(model2, which = 2) # Normality of Errors
+```
+
+The residual plots clearly indicate violations of both homoscedasticity and normality assumptions. The non-constant spread of residuals in the Scale-Location plot and the deviation of the Q-Q plot's tail from the line suggest these issues. As determined from the diagnostic analysis, the 592 outliers identified in the training set likely contribute to these violations. 
+
+### Remove outliers from train set, define Final Model, and verify assumptions are met
+
+```{r}
+# Removing 592 rows with the greatest residuals (because there are 592 outliers)
+std_res <- rstandard(model2)
+outlier_residuals <- order(abs(std_res), decreasing = TRUE)[1:592]
+train <- train[-outlier_residuals, ]
+
+# Define Final Model
+final_model <- lm(price ~ bedrooms + sqft_living + waterfront + view + grade + yr_built + region + distance_to_downtown, data = train)
+
+summary(final_model)
+```
+Final Regression Equation: price = 3154933.30  - 25591.98(bedrooms)  + 154.65(sqft_living) + 584913.42(waterfront) + 45372.16(view) + 96291.07(grade) - 1782.64(yr_built) + 41909.01(regionSuburb) - 59865.43(regionRural) - 457494.79(distance_to_downtown)
+
+### Check Final Model meets linear regression assumptions
+
+```{r}
+plot(final_model, which = 1) # Linearity
+plot(residuals(final_model), type = "l", main = "Residuals Plot") # Independence of Errors
+plot(final_model, which = 3) # Homoscedasticity
+plot(final_model, which = 2) # Normality of Errors
+```
+
+Despite the initially heavy tails observed in the residual plots, the context of our house price dataset, where significant price variations are expected, allows us to conclude that the linear regression assumptions are met after outlier removal. Specifically: linearity is supported by the random scatter of residuals in the Residuals vs Fitted plot; independence is indicated by the randomness in the residuals plot; homoscedasticity is satisfied by the constant spread of residuals; and normality of errors is supported by the linear alignment of points in the Q-Q plot.
+
+### Assess Final Model's predicitive ability on test data
+
+```{r}
+# Predict the values using the test data
+predictions <- predict(final_model, newdata = test)
+actual_prices <- test$price
+
+# Assessment metric: RMSE
+mse <- mean((predictions - actual_prices)^2) # MSE
+rmse <- sqrt(mse)
+print(paste("Root Mean Squared Error (RMSE):", rmse))
+
+# R-squared
+rss <- sum((predictions - actual_prices)^2)  # Residual sum of squares
+tss <- sum((actual_prices - mean(actual_prices))^2)  # Total sum of squares
+rsq <- 1 - rss / tss  # R-squared
+print(paste("R-squared:", rsq))
+```
+
+The RMSE of approximately 204,832 indicates that, on average, the model's predicted house prices deviate from actual prices by about $205K. This suggests a relatively high level of error, especially if most homes in the dataset are moderately priced. The R-squared value of 0.683 means the model explains about 68.3% of the variation in house prices, showing moderate predictive power. 
+
+
+# Home Quality Analysis
+
+### Univariate – Distribution of Grade and Condition
+
+```{r}
+grid.arrange(
+  ggplot(train, aes(x = factor(grade))) +
+    geom_bar(fill = "steelblue") +
+    labs(title = "Distribution of Home Grades",
+         x = "Grade (1 = Low Quality, 13 = High Quality)",
+         y = "Number of Homes") +
+    theme_minimal(),
+
+  ggplot(train, aes(x = factor(condition))) +
+    geom_bar(fill = "darkorange") +
+    labs(title = "Distribution of Home Conditions",
+         x = "Condition (1 = Poor, 5 = Excellent)",
+         y = "Number of Homes") +
+    theme_minimal(),
+
+  ncol = 2
+)
+
+ggsave("grade_condition_distribution.png", width = 12, height = 5, dpi = 300)
+
+
+```
+
+```{r}
+train <- train %>% 
+  mutate(good_quality = ifelse(condition > 3 & grade > 7, "yes", "no"))
+
+
+test <- test %>% 
+  mutate(good_quality = ifelse(condition > 3 & grade > 7, "yes", "no"))
+
+```
+
+### Univariate - Class Distribution of Good Quality
+
+```{r}
+ggplot(train, aes(x = factor(good_quality))) +
+  geom_bar(fill = "lightsteelblue") +
+  theme(plot.title=element_text(hjust=.5))+
+  labs(
+    title = "Distribution of Good Quality Homes",
+    x = "Good Quality (1 = Yes, 0 = No)",
+    y = "Number of Homes"
+  ) 
+
+```
+
+### Bivariate - Distribution of Sale Price by Home Quality Group
+
+```{r}
+ggplot(train, aes(x = factor(good_quality), y = price)) +
+  geom_boxplot(fill = "lightblue") +
+  theme(plot.title = element_text(hjust=.5)) +
+  labs(
+    title = "Price Distribution by Home Quality",
+    x = "Good Quality (1 = Yes, 0 = No)",
+    y = "Sale Price"
+  ) +
+  scale_y_continuous(breaks = breaks_extended(6), labels = label_dollar()) +
+  theme_minimal()
+```
+### Bivariate - Region vs. Good Quality
+
+```{r}
+ggplot(train, aes(x = region, fill = factor(good_quality))) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("lightgray", "steelblue"),
+                    labels = c("Not Good Quality", "Good Quality")) +
+  labs(
+    title = "Proportion of Good Quality Homes by Region",
+    x = "Region",
+    y = "Proportion of Homes",
+    fill = "Home Quality"
+  ) +
+  theme_minimal()
+```
+
+### Bivariate - Region vs. Good Quality
+
+```{r}
+ggplot(train, aes(x = factor(good_quality), y = distance_to_downtown)) +
+  geom_boxplot(fill = "darkseagreen") +
+  labs(
+    title = "Distance to Downtown by Home Quality",
+    x = "Good Quality (1 = Yes, 0 = No)",
+    y = "Distance to Downtown (miles)"
+  ) +
+  theme_minimal()
+```
+
+### Multivariate - Price vs. sqfr_living, by Good Quality
+
+```{r}
+ggplot(train, aes(x = sqft_living, y = price, color = factor(good_quality))) +
+  geom_point(alpha = 0.4) +
+  labs(
+    title = "Price vs. Living Area Colored by Good Quality",
+    x = "Sqft Living",
+    y = "Price",
+    color = "Good Quality"
+  ) +
+  scale_y_continuous(labels = label_dollar()) +
+  theme_minimal()
+```
+
+### Multivariate - Price vs. Distance to Downtown, by Good Quality
+
+```{r}
+ggplot(train, aes(x = distance_to_downtown, y = price, color = factor(good_quality))) +
+  geom_point(alpha = 0.5) +
+  labs(
+    title = "Price vs. Distance to Downtown Colored by Home Quality",
+    x = "Distance to Downtown (decimal-degrees)",
+    y = "Price",
+    color = "Good Quality"
+  ) +
+  scale_color_manual(values = c("gray70", "steelblue")) +
+  scale_y_continuous(breaks = breaks_extended(6), labels = label_dollar()) +
+  theme_minimal()
+
+```
+
+### Scatterplot of Log(Price) vs Distance to Downtown 
+
+```{r}
+ggplot(train, aes(x = distance_to_downtown, y = log(price))) +
+  geom_point(alpha = 0.2, color = "black", size = 1) +   # Light black dots
+  geom_smooth(method = "loess", se = FALSE, color = "blue", size = 1.2) +  # Trend line
+  labs(title = "Log(Price) vs Distance to Downtown",
+       x = "Distance to Downtown Seattle (decimal-degrees)",
+       y = "Log(Price)") +
+  theme_minimal()
+```
+
+# Logistic Regression for Home Quality Classification
+
+### Data Preparation for Classification
+
+```{r}
+train$good_quality <- factor(train$good_quality)
+test$good_quality <- factor(test$good_quality)
+```
+
+### Exploratory Analysis for Classification Variables 
+
+```{r}
+chart1<-ggplot(train, aes(x=waterfront, fill=good_quality))+
+  geom_bar(position = "fill")+
+  labs(x="Waterfront Property", y="Proportion",
+       title="Proportion of Good Quaility Homes by Waterfront")
+
+chart2<-ggplot(train, aes(x=region, fill=good_quality))+
+  geom_bar(position = "fill")+
+  labs(x="Region", y="Proportion",
+       title="Proportion of Good Quaility Homes by Region")
+
+chart3<-ggplot(train, aes(x=renovation_group, fill=good_quality))+
+  geom_bar(position = "fill")+
+  labs(x="Renovation Group", y="Proportion",
+       title="Proportion of Good Quaility Homes by Renovation Group")
+```
+
+### Proportion of Good Quaility Homes by Waterfront
+
+```{r}
+chart1
+```
+
+### Proportion of Good Quaility Homes by Region
+
+```{r}
+chart2
+```
+
+### Proportion of Good Quaility Homes by Renovation Group
+
+```{r}
+chart3
+```
+
+Based on these bar charts, roughly 2/3 of good quality homes have a waterfront, there are more good quality suburban homes than rural and urban homes, and there are few good quality homes that are also recently renovated.
+
+```{r}
+dp1<-ggplot2::ggplot(train,aes(x=log(price), color=good_quality))+
+  geom_density()+
+  labs(title="Density of Price by Good Quality")+
+  theme(plot.title = element_text(size=10, hjust=0.5))
+
+dp2<-ggplot2::ggplot(train,aes(x=sqft_living, color=good_quality))+
+  geom_density()+
+  labs(title="Density of Square Feet by Good Quality")+
+  theme(plot.title = element_text(size=10, hjust=0.5))
+
+dp3<-ggplot2::ggplot(train,aes(x=floors, color=good_quality))+
+  geom_density()+
+  labs(title="Density of Number of Floors by Good Quality")+
+  theme(plot.title = element_text(size=10, hjust=0.5))
+
+dp4<-ggplot2::ggplot(train,aes(x=yr_built, color=good_quality))+
+  geom_density()+
+  labs(title="Density of Year Built by Good Quality")+
+  theme(plot.title = element_text(size=10, hjust=0.5))
+
+dp5<-ggplot2::ggplot(train,aes(x=distance_to_downtown, color=good_quality))+
+  geom_density()+
+  labs(x="Distance to Downtown (decimal-degrees)", title="Density of 
+       Distance to Donwtown by Good Quality")+
+  theme(plot.title = element_text(size=10, hjust=0.5))
+
+dp6<-ggplot2::ggplot(train,aes(x=bedrooms, color=good_quality))+
+  geom_density()+
+  labs(title="Density of Bedrooms by Goood Quality")+
+  theme(plot.title = element_text(size=10, hjust=0.5))
+
+gridExtra::grid.arrange(dp1, dp2, ncol = 2, nrow = 1)
+```
+
+```{r}
+gridExtra::grid.arrange(dp3, dp4, ncol = 2, nrow = 1)
+```
+
+```{r}
+gridExtra::grid.arrange(dp5, dp6, ncol = 2, nrow = 1)
+```
+
+### Correlation matrix of predictor variables
+
+```{r}
+# Correlation matrix of quantitative predictors
+round(cor(train[,c(3:8, 10, 13 ,24)], use= "complete.obs"),3)
+```
+Based on previous visualizations, waterfront, region,renovation, price, sqft_living, floors, yr_built, distance to downtown, and bedrooms may influence the a home being deemd good quality or not. 
+
+### Define full logistic regression model
+
+```{r} 
+full_log <- glm(good_quality~price + sqft_living + yr_built + distance_to_downtown + waterfront + region + renovation_group , data = train, family = binomial())
+
+summary(full_log)
+```
+
+### Checking if there is multicollinearity among the predictor variables
+
+```{r}
+vif(full_log)
+```
+There seems to be a high degree of multicollinearity. From the correlation matrix, sqft_living, bedrooms, and bathrooms seemed to all be correlated to one another. Let's drop distance to downtown and waterfront, as they are reported as not significant.  I'd conduct a liklihood ratio test to see if we can drop these variables from the model. First I'd like to compute the accuracy and error rate from the confusion matrix for this model.
+
+### Assess model's predicitive ability on test data
+
+```{r}
+# Predicted probs for test data
+preds<-predict(full_log,newdata=test, type="response")
+
+# Confusion matrix with threshold of 0.5
+table(test$good_quality, preds>0.5)
+```
+
+```{r}
+# Calculate accuracy and error rate
+accuracy <- sum(diag(table(test$good_quality, preds > 0.5))) / sum(table(test$good_quality, preds > 0.5))
+error_rate <- 1 - accuracy
+cat("Accuracy:", round(accuracy * 100, 2), "%\nError Rate:", round(error_rate * 100, 2), "%")
+```
+
+Here we have what appears to be good accuracy and error_rate, but we must remember that most of the data set is already made up of homes that are considered not good_quality, meaning we are dealing with an unbalanced sample size of the response variable. Lets look at ROC and AUC. 
+
+### ROC and AUC
+
+```{r}
+# Produce the numbers associated with classification table
+rates<-ROCR::prediction(preds, test$good_quality)
+
+# Store the true positive and false positive rates
+roc_result<-ROCR::performance(rates,measure="tpr", x.measure="fpr")
+
+# Plot ROC curve and overlay the diagonal line for random guessing
+plot(roc_result, main="ROC Curve for Full Model")
+lines(x = c(0,1), y = c(0,1), col="red")
+```
+
+```{r}
+# Compute the AUC
+auc<-performance(rates, measure = "auc")
+auc@y.values
+```
+
+Now we see that our model that is full performs better than random guessing and has an AUC of 0.77. I'd like to see if a reduced model would perform better. 
+
+### Define reduced logistic regression model
+
+```{r}
+reduced_log <- glm(good_quality~price + sqft_living  + yr_built + region , data = train, family = binomial())
+
+summary(reduced_log)
+```
+We see that the all predictors for this model are significant.
+
+### Assess reduced model's predicitive ability on test data
+
+```{r}
+# Predicted probs for test data
+preds<-predict(reduced_log,newdata=test, type="response")
+
+# Confusion matrix with threshold of 0.5
+table(test$good_quality, preds>0.5)
+```
+```{r}
+# Calculate accuracy and error rate
+accuracy <- sum(diag(table(test$good_quality, preds > 0.5))) / sum(table(test$good_quality, preds > 0.5))
+error_rate <- 1 - accuracy
+cat("Accuracy:", round(accuracy * 100, 2), "%\nError Rate:", round(error_rate * 100, 2), "%")
+```
+
+### ROC and AUC
+
+```{r}
+# Produce the numbers associated with classification table
+rates<-ROCR::prediction(preds, test$good_quality)
+
+# Store the true positive and false positive rates
+roc_result<-ROCR::performance(rates,measure="tpr", x.measure="fpr")
+
+# Plot ROC curve and overlay the diagonal line for random guessing
+plot(roc_result, main="ROC Curve for Reduced Model")
+lines(x = c(0,1), y = c(0,1), col="red")
+```
+
+
+```{r}
+auc<-performance(rates, measure = "auc")
+auc@y.values
+```
+As we can see the AUC for the reduced model is very slightly higher than for the full model. Let's conduct a likelihood ratio test to determine which model to use. 
+
+H0: B4 = B5 = B8 = 0
+Ha: at least one beta in null is not zero. 
+
+```{r}
+# Residual deviances
+DR <- reduced_log$deviance  # Deviance of reduced model
+DF <- full_log$deviance     # Deviance of full model      
+
+delta_g <- DR - DF
+
+CV <- qchisq(0.95,3)
+
+delta_g > CV
+```
+
+So we reject the null hypothesis, meaning the additional predictors significantly improve the model, and therefore should go forward with the full model over the reduced one.
