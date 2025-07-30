@@ -67,7 +67,7 @@ High-quality homes are characterized by:
 - Generally newer construction
 - Better proximity to downtown Seattle
 
-## 🛠️ Technologies Used
+## Technologies Used
 
 - **R** - Primary analysis language
 - **tidyverse** - Data manipulation and visualization
@@ -85,7 +85,7 @@ High-quality homes are characterized by:
 └── README.md                           # This file
 ```
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 ```r
