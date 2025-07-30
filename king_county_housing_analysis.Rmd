@@ -38,11 +38,8 @@ This section includes steps to identify and fix data entry errors and transform 
 # Load the King County housing dataset
 data <- read.csv("kc_house_data.csv", sep=",", header = TRUE)
 
-# Display first 5 rows
-head(data)
-
-# Check data structure
-str(data)
+# Data structure
+# str(data)
 
 # Check for missing values
 cat("Missing values per column:\n")
